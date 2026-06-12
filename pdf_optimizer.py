@@ -25,6 +25,7 @@ except ImportError:                       # optional – ohne Paket bleiben die 
     _HAS_DND = False
 
 import engine
+import tasks
 from engine import (
     OptimizeSettings, FileResult,
     optimize_pdf, resolve_output_paths, analyze_pdf_images,
@@ -1371,7 +1372,7 @@ class PdfOptimizerApp(_APP_BASE):
             defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
         if not dst:
             return
-        if engine.merge_pdfs(files, Path(dst)):
+        if tasks.merge_pdfs(files, Path(dst)):
             messagebox.showinfo("Fertig", f"{len(files)} Dateien zusammengeführt.")
         else:
             messagebox.showerror("Fehler", "Zusammenführen fehlgeschlagen (siehe Log).")
@@ -1384,7 +1385,7 @@ class PdfOptimizerApp(_APP_BASE):
         out_dir = filedialog.askdirectory(title="Zielordner für die Einzelseiten")
         if not out_dir:
             return
-        created = engine.split_pdf(files[0], Path(out_dir))
+        created = tasks.split_pdf(files[0], Path(out_dir))
         if created:
             messagebox.showinfo("Fertig", f"{len(created)} Seiten geschrieben.")
         else:
@@ -1399,7 +1400,7 @@ class PdfOptimizerApp(_APP_BASE):
                                       initialvalue=90, parent=self)
         if not deg:
             return
-        ok = sum(engine.rotate_pdf(p, p.with_name(f"{p.stem}_gedreht.pdf"), deg)
+        ok = sum(tasks.rotate_pdf(p, p.with_name(f"{p.stem}_gedreht.pdf"), deg)
                  for p in files)
         messagebox.showinfo("Fertig", f"{ok}/{len(files)} gedreht (Suffix _gedreht).")
 
@@ -1410,7 +1411,7 @@ class PdfOptimizerApp(_APP_BASE):
         from tkinter import simpledialog
         pw = simpledialog.askstring("Passwort entfernen",
             "Passwort (leer lassen, falls keins nötig):", show="*", parent=self) or ""
-        ok = sum(engine.remove_password(p, p.with_name(f"{p.stem}_entsperrt.pdf"), pw)
+        ok = sum(tasks.remove_password(p, p.with_name(f"{p.stem}_entsperrt.pdf"), pw)
                  for p in files)
         messagebox.showinfo("Fertig", f"{ok}/{len(files)} entsperrt (Suffix _entsperrt).")
 
@@ -1418,7 +1419,7 @@ class PdfOptimizerApp(_APP_BASE):
         files = self._selected_files()
         if not files:
             return
-        ok = sum(engine.strip_metadata(p, p.with_name(f"{p.stem}_clean.pdf"))
+        ok = sum(tasks.strip_metadata(p, p.with_name(f"{p.stem}_clean.pdf"))
                  for p in files)
         messagebox.showinfo("Fertig", f"{ok}/{len(files)} bereinigt (Suffix _clean).")
 
@@ -1426,7 +1427,7 @@ class PdfOptimizerApp(_APP_BASE):
         files = self._selected_files()
         if not files:
             return
-        ok = sum(engine.repair_pdf(p, p.with_name(f"{p.stem}_repariert.pdf"))
+        ok = sum(tasks.repair_pdf(p, p.with_name(f"{p.stem}_repariert.pdf"))
                  for p in files)
         messagebox.showinfo("Reparieren",
             f"{ok}/{len(files)} repariert (Suffix _repariert).\n"

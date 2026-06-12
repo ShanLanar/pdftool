@@ -30,4 +30,4 @@ dev = ["pytest>=7.0"]        # Tests
 pdfopt = "cli:main"
 
 [tool.setuptools]
-py-modules = ["engine", "pdf_optimizer", "cli"]
+py-modules = ["engine", "pdf_optimizer", "cli", "tasks"]
