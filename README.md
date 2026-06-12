@@ -9,6 +9,9 @@ Intelligente PDF-Komprimierung und OCR-Durchsuchbarkeit – Python/tkinter GUI-T
 - **OCR per Tesseract/ocrmypdf** – macht gescannte PDFs volltext-durchsuchbar
 - **Intelligente Erkennung**: überspringt OCR wenn PDF bereits Text enthält
 - **Stapelverarbeitung** mehrerer Dateien
+- **Drag & Drop** von Dateien/Ordnern ins Fenster (optional, mit `tkinterdnd2`)
+- **PDF-Werkzeuge**: Zusammenführen, Aufteilen, Drehen, Passwort entfernen, Metadaten bereinigen
+- **Profile**: benannte Einstellungs-Sätze zum schnellen Umschalten
 - **Vorher/Nachher-Größenvergleich** mit Prozentanzeige
 - **Konfigurierbare Ausgabe**: Suffix oder In-Place, frei wählbarer Ausgabeordner
 - **Log-Fenster** mit farblicher Hervorhebung (Fehler/Warnungen/Info)

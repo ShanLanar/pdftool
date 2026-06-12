@@ -8,6 +8,7 @@ pdf2image>=1.17
 ocrmypdf>=16.0
 img2pdf>=0.5
 psutil>=5.9          # ermöglicht die CPU-/Prioritätsbegrenzung (Schonmodus)
+tkinterdnd2>=0.4     # optional: Drag & Drop von Dateien ins Fenster
 
 # Systemabhängigkeiten (über Paketmanager installieren):
 # Ubuntu/Debian:

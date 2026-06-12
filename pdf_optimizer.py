@@ -18,6 +18,12 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _HAS_DND = True
+except ImportError:                       # optional – ohne Paket bleiben die Buttons
+    _HAS_DND = False
+
 import engine
 from engine import (
     OptimizeSettings, FileResult,
@@ -551,7 +557,10 @@ class RenameDialog(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
 
 
-class PdfOptimizerApp(tk.Tk):
+_APP_BASE = TkinterDnD.Tk if _HAS_DND else tk.Tk
+
+
+class PdfOptimizerApp(_APP_BASE):
     """Haupt-GUI-Fenster."""
 
     PRESETS = {
@@ -869,6 +878,14 @@ class PdfOptimizerApp(tk.Tk):
         self.log_text.tag_configure("warn", foreground="#fab387")
         self.log_text.tag_configure("info", foreground="#cdd6f4")
 
+        # Drag & Drop aktivieren, falls tkinterdnd2 vorhanden ist
+        if _HAS_DND:
+            try:
+                self.file_list.drop_target_register(DND_FILES)
+                self.file_list.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception as exc:
+                log.debug("Drag&Drop nicht aktiviert: %s", exc)
+
     def _apply_dark_style(self, style: ttk.Style):
         bg      = "#1e1e2e"
         bg2     = "#2a2a3e"
@@ -931,6 +948,34 @@ class PdfOptimizerApp(tk.Tk):
         log.info("ocrmypdf    : %s", "✓" if not missing_ocrmypdf else "❌ fehlt")
 
     # ── Datei-Aktionen ────────────────────────────────────────────────────
+
+    def _on_drop(self, event):
+        """Verarbeitet ins Fenster gezogene Dateien/Ordner (Drag & Drop)."""
+        if self._hash_scanning:
+            messagebox.showinfo("Scan läuft",
+                "Bitte warten bis die Duplikatanalyse abgeschlossen ist.")
+            return
+        candidates: list[Path] = []
+        for raw in self.tk.splitlist(event.data):   # behandelt Pfade mit Leerzeichen
+            p = Path(raw)
+            if p.is_dir():
+                candidates += sorted(p.glob("*.pdf"))
+            elif p.suffix.lower() == ".pdf" and p.is_file():
+                candidates.append(p)
+        file_set = set(self._files)
+        new_paths: list[Path] = []
+        for p in candidates:
+            if p not in file_set:
+                file_set.add(p)
+                new_paths.append(p)
+        if not new_paths:
+            return
+        for p in new_paths:
+            self._files.append(p)
+            self.file_list.insert("end", str(p))
+        self._update_file_count()
+        log.info("%d Datei(en) per Drag & Drop hinzugefügt.", len(new_paths))
+        self._start_hash_scan(new_paths)
 
     def _add_files(self):
         if self._hash_scanning:
