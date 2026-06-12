@@ -30,12 +30,16 @@ if not exist ".venv\Scripts\python.exe" (
 
 set "VPY=.venv\Scripts\python.exe"
 
-REM Pakete installieren, wenn sie in der .venv noch fehlen (Stellvertreter: pypdf)
-"%VPY%" -c "import pypdf" >nul 2>nul
-if errorlevel 1 (
-    echo Installiere benoetigte Pakete in .venv (einmalig, kann etwas dauern) ...
+REM Pakete installieren/aktualisieren, wenn pypdf fehlt ODER sich
+REM requirements.txt seit der letzten Installation geaendert hat.
+set "NEED_INSTALL="
+"%VPY%" -c "import pypdf" >nul 2>nul || set "NEED_INSTALL=1"
+fc /b requirements.txt ".venv\requirements.stamp" >nul 2>nul || set "NEED_INSTALL=1"
+if defined NEED_INSTALL (
+    echo Installiere/aktualisiere Pakete in .venv (kann etwas dauern) ...
     echo.
     "%VPY%" -m pip install -r requirements.txt
+    copy /y requirements.txt ".venv\requirements.stamp" >nul
     echo.
 )
 
