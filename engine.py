@@ -903,6 +903,52 @@ def save_settings(data: dict) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Profile (benannte Einstellungs-Sätze)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _profiles_path() -> Path:
+    """Pfad zur Profil-Datei (neben der Konfiguration)."""
+    return _settings_path().parent / "profiles.json"
+
+
+def load_profiles() -> dict:
+    """Lädt alle gespeicherten Profile als {Name: prefs-dict}."""
+    try:
+        with open(_profiles_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _write_profiles(profiles: dict) -> None:
+    try:
+        with open(_profiles_path(), "w", encoding="utf-8") as f:
+            json.dump(profiles, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        log.warning("Profile konnten nicht gespeichert werden: %s", exc)
+
+
+def save_profile(name: str, prefs: dict) -> dict:
+    """Speichert prefs unter dem Namen und gibt alle Profile zurück."""
+    name = (name or "").strip()
+    profiles = load_profiles()
+    if name:
+        profiles[name] = prefs
+        _write_profiles(profiles)
+    return profiles
+
+
+def delete_profile(name: str) -> dict:
+    """Löscht ein Profil und gibt die verbleibenden zurück."""
+    profiles = load_profiles()
+    if name in profiles:
+        del profiles[name]
+        _write_profiles(profiles)
+    return profiles
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # CSV-Export
 # ──────────────────────────────────────────────────────────────────────────────
 

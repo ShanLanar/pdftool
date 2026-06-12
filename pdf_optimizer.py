@@ -587,6 +587,7 @@ class PdfOptimizerApp(tk.Tk):
         self._apply_prefs()                    # ← Widgets befüllen
         # Live-Aktualisierung des KB/Seite-Filters (Färbung + Seitenscan)
         self.var_skip_kb.trace_add("write", self._on_skip_threshold_change)
+        self._refresh_profiles()
         self._setup_logging()
         self._check_tools()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -662,6 +663,21 @@ class PdfOptimizerApp(tk.Tk):
         ttk.Separator(btn_row, orient="vertical").pack(side="left", fill="y", padx=(0,8))
         ttk.Button(btn_row, text="🗑 Duplikate", command=self._show_duplicates_dialog).pack(side="left", padx=(0,4))
         ttk.Button(btn_row, text="✏ Umbenennen", command=self._show_rename_dialog).pack(side="left")
+
+        # ── Profile ───────────────────────────────────────────────────────
+        prof = ttk.Frame(self)
+        prof.pack(fill="x", **pad)
+        ttk.Label(prof, text="Profil:", style="H.TLabel").pack(side="left")
+        self.var_profile = tk.StringVar()
+        self.combo_profile = ttk.Combobox(prof, textvariable=self.var_profile,
+                                          state="readonly", width=22)
+        self.combo_profile.pack(side="left", padx=4)
+        ttk.Button(prof, text="Anwenden",
+                   command=self._apply_profile).pack(side="left", padx=(0, 4))
+        ttk.Button(prof, text="💾 Speichern …",
+                   command=self._save_profile).pack(side="left", padx=(0, 4))
+        ttk.Button(prof, text="🗑 Löschen",
+                   command=self._delete_profile).pack(side="left")
 
         # ── Einstellungen ─────────────────────────────────────────────────
         cfg = ttk.LabelFrame(self, text=" Einstellungen ", padding=8)
@@ -1214,6 +1230,49 @@ class PdfOptimizerApp(tk.Tk):
         """Einstellungen speichern und Fenster schließen."""
         save_settings(self._collect_prefs())
         self.destroy()
+
+    # ── Profile ───────────────────────────────────────────────────────────
+
+    def _refresh_profiles(self, select: str = ""):
+        """Lädt die Profilnamen in die Combobox."""
+        names = sorted(engine.load_profiles().keys())
+        self.combo_profile.configure(values=names)
+        if select and select in names:
+            self.var_profile.set(select)
+        elif self.var_profile.get() not in names:
+            self.var_profile.set("")
+
+    def _apply_profile(self):
+        name = self.var_profile.get()
+        profiles = engine.load_profiles()
+        if name not in profiles:
+            messagebox.showinfo("Kein Profil", "Bitte zuerst ein Profil auswählen.")
+            return
+        self._prefs = profiles[name]
+        self._apply_prefs()
+        log.info("Profil angewendet: %s", name)
+
+    def _save_profile(self):
+        from tkinter import simpledialog
+        name = simpledialog.askstring(
+            "Profil speichern", "Name des Profils:",
+            initialvalue=self.var_profile.get(), parent=self)
+        if not name or not name.strip():
+            return
+        engine.save_profile(name, self._collect_prefs())
+        self._refresh_profiles(select=name.strip())
+        log.info("Profil gespeichert: %s", name.strip())
+
+    def _delete_profile(self):
+        name = self.var_profile.get()
+        if not name:
+            messagebox.showinfo("Kein Profil", "Bitte zuerst ein Profil auswählen.")
+            return
+        if not messagebox.askyesno("Profil löschen", f"Profil „{name}“ löschen?"):
+            return
+        engine.delete_profile(name)
+        self._refresh_profiles()
+        log.info("Profil gelöscht: %s", name)
 
     # ── Duplikate & Umbenennen ────────────────────────────────────────────────
 

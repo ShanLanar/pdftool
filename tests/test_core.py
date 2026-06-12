@@ -124,3 +124,19 @@ def test_reports_dir(monkeypatch, tmp_path):
     out = tmp_path / "out"
     assert P._reports_dir(out) == out
     assert out.is_dir()
+
+
+def test_profiles_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setattr(P, "_settings_path", lambda: tmp_path / "settings.json")
+    assert P.load_profiles() == {}
+    P.save_profile("Archiv", {"image_dpi": 300, "ocr_enabled": False})
+    P.save_profile("E-Mail", {"image_dpi": 72})
+    profs = P.load_profiles()
+    assert set(profs) == {"Archiv", "E-Mail"}
+    assert profs["Archiv"]["image_dpi"] == 300
+    P.save_profile("   ", {"x": 1})                 # leerer Name -> ignoriert
+    assert set(P.load_profiles()) == {"Archiv", "E-Mail"}
+    P.delete_profile("Archiv")
+    assert set(P.load_profiles()) == {"E-Mail"}
+    P.delete_profile("gibtsnicht")                  # kein Fehler
+    assert set(P.load_profiles()) == {"E-Mail"}
