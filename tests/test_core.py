@@ -84,6 +84,15 @@ def test_file_hash_missing_file_returns_empty(tmp_path):
     assert P.file_hash(tmp_path / "gibtsnicht.bin") == ""
 
 
+def test_size_duplicate_candidates(tmp_path):
+    a = tmp_path / "a.bin"; a.write_bytes(b"x" * 100)
+    b = tmp_path / "b.bin"; b.write_bytes(b"y" * 100)   # gleiche Größe wie a
+    c = tmp_path / "c.bin"; c.write_bytes(b"z" * 50)    # eindeutige Größe
+    assert set(P.size_duplicate_candidates([a, b, c])) == {a, b}
+    assert P.size_duplicate_candidates([c]) == []        # einzeln -> kein Kandidat
+    assert P.size_duplicate_candidates([]) == []
+
+
 # ── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
 def test_kb_per_page(tmp_path):

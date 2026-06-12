@@ -227,6 +227,23 @@ def file_hash(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def size_duplicate_candidates(paths: list[Path]) -> list[Path]:
+    """
+    Gibt nur die Pfade zurück, die ihre Dateigröße mit mindestens einer anderen
+    Datei teilen – also die einzigen, die für eine Duplikatprüfung überhaupt in
+    Frage kommen. Dateien mit eindeutiger Größe können keine Duplikate sein und
+    müssen daher nicht (teuer) gehasht werden.
+    """
+    groups: dict[int, list[Path]] = {}
+    for p in paths:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        groups.setdefault(size, []).append(p)
+    return [p for lst in groups.values() if len(lst) > 1 for p in lst]
+
+
 def _set_low_priority():
     """
     Setzt den aktuellen Prozess auf niedrige Priorität.
@@ -513,8 +530,11 @@ def recompress_images(
                     errors += 1
                     skipped += 1
 
-        with open(dst, "wb") as f:
-            writer.write(f)
+        # Nur schreiben, wenn wirklich etwas ersetzt wurde – sonst spart man
+        # sich das komplette Neu-Schreiben der PDF (reine I/O-Ersparnis).
+        if replaced > 0:
+            with open(dst, "wb") as f:
+                writer.write(f)
 
         log.info("Bildneukomprimierung: %d ersetzt, %d übersprungen, %d Fehler",
                  replaced, skipped, errors)

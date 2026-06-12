@@ -1025,19 +1025,28 @@ class PdfOptimizerApp(_APP_BASE):
     def _start_hash_scan(self, paths: list[Path]):
         """Startet den Hintergrund-Thread für SHA-256-Hashing."""
         self._hash_scanning = True
-        total = len(paths)
 
         # Scan-Fortschrittsbalken einblenden
         self._scan_bar_frame.pack(fill="x", pady=(2, 0))
-        self.scan_progress["maximum"] = total
         self.scan_progress["value"] = 0
-        self.var_scan_status.set(f"⟳ Duplikatanalyse … 0 / {total}")
+        self.var_scan_status.set("⟳ Duplikatanalyse … (Größen prüfen)")
 
         def worker():
+            # Vorfilter: Nur Dateien hashen, die ihre Größe mit mindestens einer
+            # anderen teilen. Unterschiedliche Größe ⇒ kann kein Duplikat sein,
+            # also spart man sich das (teure) vollständige Lesen.
+            candidates = engine.size_duplicate_candidates(paths)
+            cand_set = set(candidates)
+            for p in paths:
+                if p not in cand_set:
+                    self._hash_cache[p] = ""        # eindeutige Größe = kein Duplikat
+            total = len(candidates)
+            self.after(0, self._scan_set_total, total)
+
             done = 0
             # 4 parallele Worker – gut für NAS (mehrere simultane Verbindungen)
             with ThreadPoolExecutor(max_workers=4) as pool:
-                futures = {pool.submit(file_hash, p): p for p in paths}
+                futures = {pool.submit(file_hash, p): p for p in candidates}
                 for fut in as_completed(futures):
                     p = futures[fut]
                     try:
@@ -1053,6 +1062,12 @@ class PdfOptimizerApp(_APP_BASE):
             self.after(0, self._scan_done)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _scan_set_total(self, total: int):
+        """Setzt die Fortschrittsanzeige auf die Zahl der Hash-Kandidaten."""
+        self.scan_progress["maximum"] = max(total, 1)
+        self.scan_progress["value"] = 0
+        self.var_scan_status.set(f"⟳ Duplikatanalyse … 0 / {total}")
 
     def _scan_tick(self, done: int, total: int):
         """Wird vom Haupt-Thread nach jedem fertig gehashten File aufgerufen."""
