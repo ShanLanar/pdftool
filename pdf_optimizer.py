@@ -63,6 +63,7 @@ class OptimizeSettings:
     ocr_enabled: bool = True
     ocr_lang: str = "deu+eng"
     ocr_force: bool = False           # True = OCR auch wenn Text vorhanden
+    ocr_jobs: int = 0                 # 0 = automatisch (an CPU-Kerne/Worker gekoppelt)
     # Schonmodus (Netzteil/Temperatur)
     gentle_mode: bool = False
     gentle_pause_s: float = 2.0
@@ -223,20 +224,22 @@ def kb_per_page(pdf_path: Path, page_count: int) -> float:
         return 0.0
 
 
-def file_hash(path: Path, chunk: int = 65536) -> str:
-    """SHA-256-Hash einer Datei (erste 2 MB genügen für Duplikaterkennung)."""
+def file_hash(path: Path, chunk: int = 1 << 20) -> str:
+    """
+    SHA-256-Hash über den GESAMTEN Datei-Inhalt.
+
+    Wird zur Duplikaterkennung genutzt. Da auf Basis dieses Hashes anschließend
+    gelöscht oder verschoben werden kann, muss er den vollständigen Inhalt
+    abdecken: Ein Teil-Hash (z. B. nur die ersten 2 MB) würde verschiedene
+    Dateien mit gleichem Anfang fälschlich als identisch melden und könnte so
+    zum Löschen der falschen Datei führen.
+    """
     import hashlib
     h = hashlib.sha256()
-    read = 0
-    max_bytes = 2 * 1024 * 1024
     try:
         with open(path, "rb") as f:
-            while read < max_bytes:
-                buf = f.read(min(chunk, max_bytes - read))
-                if not buf:
-                    break
+            for buf in iter(lambda: f.read(chunk), b""):
                 h.update(buf)
-                read += len(buf)
     except OSError:
         return ""
     return h.hexdigest()
@@ -275,10 +278,11 @@ def _set_low_priority():
         log.debug("Priorität konnte nicht gesetzt werden: %s", exc)
 
 
-def _set_gs_low_priority(proc: subprocess.Popen):
+def _set_gs_low_priority(proc: subprocess.Popen, max_cores: Optional[int] = None):
     """
-    Setzt einen laufenden Ghostscript-Prozess auf niedrige Priorität
-    und begrenzt ihn auf maximal N-1 CPU-Kerne (mindestens 1).
+    Setzt einen laufenden Ghostscript-Prozess auf niedrige Priorität und
+    begrenzt seine CPU-Affinität. Standard: alle Kerne außer einem (für OS/GUI);
+    mit max_cores noch enger (z. B. im Schonmodus).
     """
     if not _HAS_PSUTIL:
         return
@@ -288,13 +292,35 @@ def _set_gs_low_priority(proc: subprocess.Popen):
             ps.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
         else:
             ps.nice(10)
-        # Affinität: alle Kerne außer einem (für OS und GUI)
-        cores = list(range(psutil.cpu_count(logical=True) or 2))
-        if len(cores) > 1:
-            ps.cpu_affinity(cores[:-1])   # letzten Kern freilassen
-        log.debug("GS-Prozess %d: Priorität niedrig, %d Kerne.", proc.pid, len(cores) - 1)
+        total = psutil.cpu_count(logical=True) or 2
+        n = total - 1 if total > 1 else 1      # mindestens einen Kern frei lassen
+        if max_cores:
+            n = max(1, min(n, max_cores))
+        if n < total:
+            ps.cpu_affinity(list(range(n)))
+        log.debug("GS-Prozess %d: Priorität niedrig, %d/%d Kerne.", proc.pid, n, total)
     except Exception as exc:
         log.debug("GS-Priorität konnte nicht gesetzt werden: %s", exc)
+
+
+# ── CPU-Budget: verhindert Überlastung (Hitze / Netzteil) ────────────────────
+CPU_COUNT = os.cpu_count() or 2
+
+
+def _ocr_jobs_budget(n_workers: int, gentle: bool) -> int:
+    """
+    Wie viele CPU-Kerne EIN Worker für OCR nutzen darf, so dass die Gesamtlast
+    (n_workers × jobs) die Maschine nicht überlastet.
+
+    ocrmypdf parallelisiert sonst über ALLE Kerne – und das pro Worker, was
+    zu massiver Übersättigung (dauerhaft 100 % auf allen Kernen) führt.
+    Schonmodus nutzt höchstens die Hälfte der Kerne, sonst alle außer einem.
+    """
+    if gentle:
+        total = max(1, CPU_COUNT // 2)
+    else:
+        total = max(1, CPU_COUNT - 1)          # einen Kern für OS/GUI frei lassen
+    return max(1, total // max(1, n_workers))
 
 
 def compress_with_gs(
@@ -303,6 +329,7 @@ def compress_with_gs(
     preset: str = "ebook",
     image_dpi: int = 150,
     gentle: bool = False,
+    max_cores: Optional[int] = None,
     progress_cb=None,
 ) -> bool:
     """
@@ -347,7 +374,7 @@ def compress_with_gs(
             stderr=subprocess.PIPE,
         )
         if gentle:
-            _set_gs_low_priority(proc)
+            _set_gs_low_priority(proc, max_cores)
 
         _, stderr = proc.communicate(timeout=600)
         if proc.returncode != 0:
@@ -520,6 +547,7 @@ def run_ocr(
     dst: Path,
     lang: str = "deu+eng",
     force: bool = False,
+    jobs: int = 0,
     progress_cb=None,
 ) -> bool:
     """
@@ -567,8 +595,16 @@ def run_ocr(
     else:
         kwargs["skip_text"] = True
 
-    log.info("OCR: %s (lang=%s, api=%s, force=%s)",
-             src.name, lang, "v16+" if new_api else "v14", force)
+    # CPU-Last begrenzen: ocrmypdf parallelisiert sonst über alle Kerne.
+    if jobs and "jobs" in sig_params:
+        kwargs["jobs"] = jobs
+    # Tesseract auf 1 Thread pro Prozess festnageln – Parallelität läuft bereits
+    # über 'jobs'; ohne dieses Limit summieren sich jobs × OMP-Threads zur
+    # Überlastung aller Kerne (Hitze / Netzteil-Notabschaltung).
+    os.environ["OMP_THREAD_LIMIT"] = "1"
+
+    log.info("OCR: %s (lang=%s, api=%s, force=%s, jobs=%s)",
+             src.name, lang, "v16+" if new_api else "v14", force, jobs or "auto")
     try:
         ocrmypdf.ocr(**kwargs)
         return True
@@ -586,12 +622,17 @@ def optimize_pdf(
     settings: OptimizeSettings,
     progress_cb=None,
     status_cb=None,
+    out_path: Optional[Path] = None,
 ) -> FileResult:
     """
     Haupt-Pipeline: Komprimierung → OCR → Ausgabedatei.
 
     progress_cb(float 0-1): optionaler Fortschritts-Callback
     status_cb(str):         optionaler Status-Text-Callback
+    out_path:               vorgegebener Ausgabepfad. Wird er nicht gesetzt,
+                            berechnet ihn die Funktion aus den Einstellungen.
+                            Der Aufrufer kann so Namenskollisionen (zwei Quellen
+                            mit gleichem Dateinamen) vorab auflösen.
     """
     result = FileResult(path=pdf_path, success=False)
     result.size_before = pdf_path.stat().st_size
@@ -601,16 +642,15 @@ def optimize_pdf(
         if status_cb:
             status_cb(msg)
 
-    # Ausgabepfad berechnen
-    if settings.output_dir:
-        out_dir = settings.output_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
+    # Ausgabepfad berechnen (falls nicht vom Aufrufer vorgegeben)
+    if out_path is None:
+        out_dir = settings.output_dir if settings.output_dir else pdf_path.parent
+        stem = pdf_path.stem
+        suffix = settings.output_suffix or ""
+        out_path = out_dir / f"{stem}{suffix}.pdf"
     else:
-        out_dir = pdf_path.parent
-
-    stem = pdf_path.stem
-    suffix = settings.output_suffix or ""
-    out_path = out_dir / f"{stem}{suffix}.pdf"
+        out_dir = out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Temporäre Zwischendateien — UUID-basiert damit kein Namens-Stapeln entsteht
     import uuid
@@ -660,6 +700,7 @@ def optimize_pdf(
                 preset=settings.gs_preset,
                 image_dpi=settings.image_dpi,
                 gentle=settings.gentle_mode,
+                max_cores=settings.ocr_jobs or None,
                 progress_cb=progress_cb,
             )
             if not ok:
@@ -683,14 +724,15 @@ def optimize_pdf(
 
             if should_ocr:
                 _status(f"OCR läuft (Sprache: {settings.ocr_lang}) …")
-                # force_ocr rastert alle Seiten — bei Scan-PDFs (reinen Bildern)
-                # ist das unnötig und bläht die Datei massiv auf.
-                # Stattdessen: redo_ocr wenn Text vorhanden, normaler OCR sonst.
-                use_force = settings.ocr_force and not result.had_text
+                # "Erzwingen" (force_ocr) rastert auch Seiten mit vorhandenem
+                # Text neu und legt eine frische OCR-Ebene an – genau das, was
+                # die Checkbox verspricht. Ohne Erzwingen werden Textseiten
+                # übersprungen (skip_text) und nur reine Bildseiten erkannt.
                 ok = run_ocr(
                     tmp_compressed, tmp_ocr,
                     lang=settings.ocr_lang,
-                    force=use_force,
+                    force=settings.ocr_force,
+                    jobs=settings.ocr_jobs,
                     progress_cb=progress_cb,
                 )
                 if ok:
@@ -769,6 +811,35 @@ def optimize_pdf(
         progress_cb(1.0)
 
     return result
+
+
+def resolve_output_paths(paths: list[Path],
+                         settings: OptimizeSettings) -> dict[Path, Path]:
+    """
+    Berechnet für jede Quelle einen eindeutigen Ausgabepfad.
+
+    Liegen mehrere Quellen mit gleichem Dateinamen (z. B. aus verschiedenen
+    Unterordnern) und ein gemeinsamer Ausgabeordner vor, würden sie sonst auf
+    dieselbe Zieldatei schreiben und sich gegenseitig überschreiben. Solche
+    Kollisionen werden hier durch ein angehängtes _1, _2, … aufgelöst.
+    In-Place-Überschreiben der Quelle (kein Suffix, selbes Verzeichnis) bleibt
+    erlaubt und gilt nicht als Kollision.
+    """
+    suffix = settings.output_suffix or ""
+    used: set[Path] = set()
+    mapping: dict[Path, Path] = {}
+    for p in paths:
+        out_dir = settings.output_dir if settings.output_dir else p.parent
+        candidate = out_dir / f"{p.stem}{suffix}.pdf"
+        # In-Place auf die Quelle selbst ist gewollt – nicht umbenennen.
+        if candidate != p:
+            n = 1
+            while candidate in used:
+                candidate = out_dir / f"{p.stem}{suffix}_{n}.pdf"
+                n += 1
+        mapping[p] = candidate
+        used.add(candidate)
+    return mapping
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1873,12 +1944,14 @@ class PdfOptimizerApp(tk.Tk):
             self.file_list.delete(i)
             self._files.pop(i)
             self._hash_cache.pop(removed, None)
+            self._page_cache.pop(removed, None)
         self._update_file_count()
         self._update_dup_badge()
 
     def _clear_files(self):
         self.file_list.delete(0, "end")
         self._hash_cache.clear()
+        self._page_cache.clear()
         self._files.clear()
         self._update_file_count()
         self._update_dup_badge()
@@ -2212,8 +2285,18 @@ class PdfOptimizerApp(tk.Tk):
         if n_skip:
             self.after(0, log.info, "Überspringe %d Duplikat(e).", n_skip)
 
+        # CPU-Budget festlegen: begrenzt die Gesamtlast (n_workers × OCR-Jobs),
+        # damit die Maschine nicht dauerhaft auf 100 % läuft (Hitze/Netzteil).
+        settings.ocr_jobs = _ocr_jobs_budget(n_workers, settings.gentle_mode)
+        # Ausgabepfade vorab kollisionsfrei auflösen.
+        out_map = resolve_output_paths(to_process, settings)
+
         n = len(to_process)
         self.after(0, self._set_overall_progress, 0, n)
+        self.after(0, log.info,
+                   "CPU-Budget: %d Worker × %d OCR-Job(s) von %d Kernen%s.",
+                   n_workers, settings.ocr_jobs, CPU_COUNT,
+                   " · Schonmodus" if settings.gentle_mode else "")
         self.after(0, self.var_status.set,
                    f"Starte {n_workers} Worker · 0 / {n} fertig …")
 
@@ -2224,12 +2307,14 @@ class PdfOptimizerApp(tk.Tk):
                     error="Abgebrochen",
                     size_before=pdf_path.stat().st_size if pdf_path.exists() else 0,
                 )
-            # Schonmodus: Worker gestaffelt starten
-            if settings.gentle_mode and worker_idx > 0:
+            # Schonmodus: nur die erste Welle (max. n_workers Dateien) gestaffelt
+            # starten, damit nicht alle Worker gleichzeitig Volllast erzeugen.
+            # Spätere Dateien warten ohnehin auf einen freien Pool-Slot.
+            if settings.gentle_mode and 0 < worker_idx < n_workers:
                 delay = worker_idx * settings.gentle_worker_delay_s
-                log.debug("Worker %d: warte %.0fs vor Start.", worker_idx, delay)
+                log.debug("Worker-Start %d: warte %.0fs.", worker_idx, delay)
                 time.sleep(delay)
-            return optimize_pdf(pdf_path, settings)
+            return optimize_pdf(pdf_path, settings, out_path=out_map.get(pdf_path))
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             future_to_path = {
