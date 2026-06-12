@@ -32,6 +32,15 @@ brew install ghostscript tesseract tesseract-lang poppler
 
 ## Starten
 
+**Windows (am einfachsten):** Doppelklick auf **`PDF-Optimizer-starten.bat`**.
+Beim ersten Start wird automatisch eine virtuelle Umgebung (`.venv`) angelegt und
+die benötigten Python-Pakete werden dort installiert – das globale Python bleibt
+unberührt.
+
+Neueste Version holen: Doppelklick auf **`Code-aktualisieren.bat`**.
+
+**Manuell (alle Systeme):**
+
 ```bash
 python pdf_optimizer.py
 ```
@@ -69,3 +78,43 @@ Weitere Sprachpakete: `sudo apt install tesseract-ocr-fra` (Französisch), etc.
   (bis 10 Minuten pro Datei).
 - Die Komprimierung kann Dateien in Einzelfällen leicht *vergrößern* (z.B. bereits
   gut komprimierte PDFs ohne Bilder) – das ist normal.
+
+## Häufige Fragen / Fehlerbehebung
+
+**Der Rechner wird sehr langsam oder schaltet sich unter Last ab.**
+Das Tool begrenzt seine CPU-Last automatisch (es lässt einen Kern frei und koppelt
+die OCR-Parallelität an Kernzahl und Worker-Anzahl). Für maximale Schonung:
+**Schonmodus** aktivieren und **Parallele Worker = 1** setzen.
+⚠️ Schaltet sich der Rechner bei Volllast wirklich *ab*, ist das fast immer ein
+Hardware-Problem (Kühlung/Staub/Wärmeleitpaste oder zu schwaches Netzteil) –
+Software kann die Last nur senken, nicht die Ursache beheben.
+
+**„Ergebnis ≥ Original – Original wird behalten."**
+Normal bei PDFs, die bereits gut komprimiert sind oder nur Text/Vektoren enthalten.
+Das Tool verwirft das größere Ergebnis und behält das Original.
+
+**„Ghostscript / Tesseract nicht gefunden."**
+Die Systemtools fehlen. Installieren (siehe oben) oder beim Start im Setup-Dialog
+den Pfad zur ausführbaren Datei angeben. Ohne Ghostscript ist nur OCR möglich,
+ohne Tesseract/ocrmypdf nur Komprimierung.
+
+**OCR findet eine Sprache nicht.**
+Sprachpaket installieren, z.B. `sudo apt install tesseract-ocr-fra`. Mehrere
+Sprachen mit `+` kombinieren (`deu+eng`).
+
+**Doppelklick fragt, „womit" die .bat geöffnet werden soll.**
+`.bat`-Dateien müssen mit dem Windows-Befehlsprozessor verknüpft sein:
+Rechtsklick → Öffnen mit → „Windows-Befehlsverarbeitung".
+
+**Wie werden Duplikate erkannt?**
+Über den vollständigen Datei-Inhalt (SHA-256), nicht nur den Dateianfang. Vor dem
+Löschen bleibt pro Gruppe immer mindestens eine Datei erhalten.
+
+## Tests
+
+```bash
+python -m pytest -q
+```
+
+Testet die reinen Kernfunktionen (Ausgabepfade, CPU-Budget, Datei-Hash, …) ohne
+Ghostscript/Tesseract und ohne GUI.
