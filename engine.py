@@ -985,3 +985,134 @@ def export_csv(results: list, out_path: Path) -> None:
                 status,
                 r.error,
             ])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PDF-Werkzeuge (pypdf)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def merge_pdfs(paths: list[Path], dst: Path) -> bool:
+    """Fügt mehrere PDFs in der angegebenen Reihenfolge zu einer Datei zusammen."""
+    try:
+        from pypdf import PdfWriter
+    except ImportError as exc:
+        log.error("Zusammenführen: %s", exc)
+        return False
+    try:
+        writer = PdfWriter()
+        for p in paths:
+            writer.append(str(p))
+        with open(dst, "wb") as f:
+            writer.write(f)
+        log.info("Zusammengeführt: %d Dateien → %s", len(paths), dst.name)
+        return True
+    except Exception as exc:
+        log.error("Zusammenführen fehlgeschlagen: %s", exc)
+        return False
+
+
+def split_pdf(src: Path, out_dir: Path) -> list[Path]:
+    """Zerlegt ein PDF in einzelne Seiten-Dateien. Gibt die erzeugten Pfade zurück."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as exc:
+        log.error("Aufteilen: %s", exc)
+        return []
+    try:
+        reader = PdfReader(str(src))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        n = len(reader.pages)
+        width = len(str(n))
+        created: list[Path] = []
+        for i, page in enumerate(reader.pages, start=1):
+            writer = PdfWriter()
+            writer.add_page(page)
+            dst = out_dir / f"{src.stem}_{i:0{width}d}.pdf"
+            with open(dst, "wb") as f:
+                writer.write(f)
+            created.append(dst)
+        log.info("Aufgeteilt: %s → %d Seiten", src.name, len(created))
+        return created
+    except Exception as exc:
+        log.error("Aufteilen fehlgeschlagen: %s", exc)
+        return []
+
+
+def rotate_pdf(src: Path, dst: Path, degrees: int = 90) -> bool:
+    """Dreht alle Seiten um ein Vielfaches von 90 Grad (im Uhrzeigersinn)."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as exc:
+        log.error("Drehen: %s", exc)
+        return False
+    try:
+        reader = PdfReader(str(src))
+        writer = PdfWriter()
+        for page in reader.pages:
+            page.rotate(degrees)
+            writer.add_page(page)
+        with open(dst, "wb") as f:
+            writer.write(f)
+        log.info("Gedreht (%d°): %s", degrees, src.name)
+        return True
+    except Exception as exc:
+        log.error("Drehen fehlgeschlagen: %s", exc)
+        return False
+
+
+def remove_password(src: Path, dst: Path, password: str = "") -> bool:
+    """Entfernt die Verschlüsselung (Passwort muss bekannt sein) und schreibt entsperrt."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as exc:
+        log.error("Passwort entfernen: %s", exc)
+        return False
+    try:
+        reader = PdfReader(str(src))
+        if reader.is_encrypted:
+            if reader.decrypt(password) == 0:     # 0 = Passwort falsch
+                log.error("Falsches Passwort für %s", src.name)
+                return False
+        writer = PdfWriter()
+        writer.append(reader)
+        with open(dst, "wb") as f:
+            writer.write(f)
+        log.info("Entsperrt: %s", src.name)
+        return True
+    except Exception as exc:
+        log.error("Passwort entfernen fehlgeschlagen: %s", exc)
+        return False
+
+
+def read_metadata(src: Path) -> dict:
+    """Liest die Dokument-Metadaten (Titel, Autor, …) als String-Dict."""
+    try:
+        from pypdf import PdfReader
+        md = PdfReader(str(src)).metadata or {}
+        return {str(k): str(v) for k, v in md.items()}
+    except Exception as exc:
+        log.warning("Metadaten lesen fehlgeschlagen für %s: %s", src.name, exc)
+        return {}
+
+
+def strip_metadata(src: Path, dst: Path) -> bool:
+    """Schreibt eine Kopie mit geleerten Dokument-Metadaten (Datenschutz)."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as exc:
+        log.error("Metadaten bereinigen: %s", exc)
+        return False
+    try:
+        reader = PdfReader(str(src))
+        writer = PdfWriter()
+        writer.append(reader)
+        existing = (reader.metadata or {}).keys()
+        if existing:
+            writer.add_metadata({k: "" for k in existing})   # Werte leeren
+        with open(dst, "wb") as f:
+            writer.write(f)
+        log.info("Metadaten bereinigt: %s", src.name)
+        return True
+    except Exception as exc:
+        log.error("Metadaten bereinigen fehlgeschlagen: %s", exc)
+        return False

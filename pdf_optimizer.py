@@ -679,6 +679,21 @@ class PdfOptimizerApp(tk.Tk):
         ttk.Button(prof, text="🗑 Löschen",
                    command=self._delete_profile).pack(side="left")
 
+        # ── PDF-Werkzeuge (arbeiten auf der Auswahl, sonst auf allen) ──────
+        tools = ttk.Frame(self)
+        tools.pack(fill="x", **pad)
+        ttk.Label(tools, text="Werkzeuge:", style="H.TLabel").pack(side="left")
+        ttk.Button(tools, text="Zusammenführen",
+                   command=self._tool_merge).pack(side="left", padx=4)
+        ttk.Button(tools, text="Aufteilen",
+                   command=self._tool_split).pack(side="left", padx=(0, 4))
+        ttk.Button(tools, text="Drehen",
+                   command=self._tool_rotate).pack(side="left", padx=(0, 4))
+        ttk.Button(tools, text="Passwort entfernen",
+                   command=self._tool_remove_password).pack(side="left", padx=(0, 4))
+        ttk.Button(tools, text="Metadaten bereinigen",
+                   command=self._tool_strip_metadata).pack(side="left")
+
         # ── Einstellungen ─────────────────────────────────────────────────
         cfg = ttk.LabelFrame(self, text=" Einstellungen ", padding=8)
         cfg.pack(fill="x", **pad)
@@ -1273,6 +1288,75 @@ class PdfOptimizerApp(tk.Tk):
         engine.delete_profile(name)
         self._refresh_profiles()
         log.info("Profil gelöscht: %s", name)
+
+    # ── PDF-Werkzeuge ─────────────────────────────────────────────────────
+
+    def _selected_files(self) -> list[Path]:
+        """Markierte Dateien – oder alle, wenn nichts markiert ist."""
+        idx = self.file_list.curselection()
+        return [self._files[i] for i in idx] if idx else list(self._files)
+
+    def _tool_merge(self):
+        files = self._selected_files()
+        if len(files) < 2:
+            messagebox.showinfo("Zusammenführen",
+                "Bitte mindestens 2 Dateien markieren (Reihenfolge = Auswahl).")
+            return
+        dst = filedialog.asksaveasfilename(
+            title="Zusammengeführte PDF speichern",
+            defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
+        if not dst:
+            return
+        if engine.merge_pdfs(files, Path(dst)):
+            messagebox.showinfo("Fertig", f"{len(files)} Dateien zusammengeführt.")
+        else:
+            messagebox.showerror("Fehler", "Zusammenführen fehlgeschlagen (siehe Log).")
+
+    def _tool_split(self):
+        files = self._selected_files()
+        if len(files) != 1:
+            messagebox.showinfo("Aufteilen", "Bitte genau eine Datei markieren.")
+            return
+        out_dir = filedialog.askdirectory(title="Zielordner für die Einzelseiten")
+        if not out_dir:
+            return
+        created = engine.split_pdf(files[0], Path(out_dir))
+        if created:
+            messagebox.showinfo("Fertig", f"{len(created)} Seiten geschrieben.")
+        else:
+            messagebox.showerror("Fehler", "Aufteilen fehlgeschlagen (siehe Log).")
+
+    def _tool_rotate(self):
+        files = self._selected_files()
+        if not files:
+            return
+        from tkinter import simpledialog
+        deg = simpledialog.askinteger("Drehen", "Grad im Uhrzeigersinn (90, 180, 270):",
+                                      initialvalue=90, parent=self)
+        if not deg:
+            return
+        ok = sum(engine.rotate_pdf(p, p.with_name(f"{p.stem}_gedreht.pdf"), deg)
+                 for p in files)
+        messagebox.showinfo("Fertig", f"{ok}/{len(files)} gedreht (Suffix _gedreht).")
+
+    def _tool_remove_password(self):
+        files = self._selected_files()
+        if not files:
+            return
+        from tkinter import simpledialog
+        pw = simpledialog.askstring("Passwort entfernen",
+            "Passwort (leer lassen, falls keins nötig):", show="*", parent=self) or ""
+        ok = sum(engine.remove_password(p, p.with_name(f"{p.stem}_entsperrt.pdf"), pw)
+                 for p in files)
+        messagebox.showinfo("Fertig", f"{ok}/{len(files)} entsperrt (Suffix _entsperrt).")
+
+    def _tool_strip_metadata(self):
+        files = self._selected_files()
+        if not files:
+            return
+        ok = sum(engine.strip_metadata(p, p.with_name(f"{p.stem}_clean.pdf"))
+                 for p in files)
+        messagebox.showinfo("Fertig", f"{ok}/{len(files)} bereinigt (Suffix _clean).")
 
     # ── Duplikate & Umbenennen ────────────────────────────────────────────────
 
