@@ -19,8 +19,8 @@ Intelligente PDF-Komprimierung und OCR-Durchsuchbarkeit – Python/tkinter GUI-T
 ## Installation
 
 ```bash
-# Python-Pakete
-pip install -r requirements.txt
+# Python-Pakete (mit Extras für OCR und Drag & Drop)
+pip install -e ".[ocr,dnd]"
 
 # Ubuntu/Debian – Systemtools
 sudo apt install ghostscript tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng poppler-utils
