@@ -35,12 +35,14 @@ brew install ghostscript tesseract tesseract-lang poppler
 
 ## Starten
 
-**Windows (am einfachsten):** Doppelklick auf **`PDF-Optimizer-starten.bat`**.
-Beim ersten Start wird automatisch eine virtuelle Umgebung (`.venv`) angelegt und
-die benötigten Python-Pakete werden dort installiert – das globale Python bleibt
-unberührt.
+**Windows (am einfachsten):** Doppelklick auf **`update-and-run.bat`** – holt die
+neueste Version *und* startet das Programm in einem Schritt.
 
-Neueste Version holen: Doppelklick auf **`Code-aktualisieren.bat`**.
+Nur starten (ohne Update): **`PDF-Optimizer-starten.bat`**. Beim ersten Start wird
+automatisch eine virtuelle Umgebung (`.venv`) angelegt und die benötigten
+Python-Pakete werden dort installiert – das globale Python bleibt unberührt.
+
+Nur aktualisieren: **`Code-aktualisieren.bat`**.
 
 **Manuell (alle Systeme):**
 
