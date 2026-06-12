@@ -736,8 +736,8 @@ class PdfOptimizerApp(_APP_BASE):
         self.spin_dpi.pack(side="left")
         ttk.Label(dpi_frame, text=" dpi").pack(side="left")
 
-        self.var_recompress = tk.BooleanVar(value=True)
-        ttk.Checkbutton(left, text="Bilder direkt neu einbetten (Pillow)",
+        self.var_recompress = tk.BooleanVar(value=False)
+        ttk.Checkbutton(left, text="Bilder zusätzlich mit Pillow verkleinern (langsamer)",
                          variable=self.var_recompress,
                          command=self._toggle_recompress).grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))

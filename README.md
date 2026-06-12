@@ -113,6 +113,11 @@ die OCR-Parallelität an Kernzahl und Worker-Anzahl). Für maximale Schonung:
 Hardware-Problem (Kühlung/Staub/Wärmeleitpaste oder zu schwaches Netzteil) –
 Software kann die Last nur senken, nicht die Ursache beheben.
 
+Tempo-Tipp: Die Option **„Bilder zusätzlich mit Pillow verkleinern"** ist
+standardmäßig **aus**, weil Ghostscript das Downsampling meist allein erledigt –
+einschalten nur, wenn einzelne PDFs damit nicht klein genug werden (kostet
+spürbar mehr CPU/Zeit).
+
 **„Ergebnis ≥ Original – Original wird behalten."**
 Normal bei PDFs, die bereits gut komprimiert sind oder nur Text/Vektoren enthalten.
 Das Tool verwirft das größere Ergebnis und behält das Original.

@@ -38,7 +38,7 @@ class OptimizeSettings:
     gs_preset: str = "ebook"          # screen | ebook | printer | prepress
     image_dpi: int = 150              # Ziel-DPI für eingebettete Bilder
     # Direkte Bildneukomprimierung (Pillow)
-    recompress_images: bool = True    # Bilder > image_dpi direkt neu einbetten
+    recompress_images: bool = False   # zusätzlich Pillow-Downsampling (langsamer; GS reicht meist)
     jpeg_quality: int = 75            # JPEG-Qualität 1–95
     # OCR
     ocr_enabled: bool = True
@@ -887,7 +887,7 @@ DEFAULT_PREFS: dict = {
     "compress": True,
     "gs_preset_index": 1,
     "image_dpi": 150,
-    "recompress_images": True,
+    "recompress_images": False,
     "jpeg_quality": 75,
     "ocr_enabled": True,
     "ocr_lang": "deu+eng",
