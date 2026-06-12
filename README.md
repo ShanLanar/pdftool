@@ -139,6 +139,13 @@ Rechtsklick → Öffnen mit → „Windows-Befehlsverarbeitung".
 Über den vollständigen Datei-Inhalt (SHA-256), nicht nur den Dateianfang. Vor dem
 Löschen bleibt pro Gruppe immer mindestens eine Datei erhalten.
 
+**Warnungen wie „invalid pdf header" / „EOF marker not found".**
+Solche Dateien sind meist gar keine PDFs, sondern z.B. MP3-, RTF- oder Word-
+Dateien mit der Endung `.pdf`. Das Tool erkennt das am Dateiinhalt, überspringt
+sie mit klarer Meldung und bietet **„🚫 Nicht-PDFs entfernen"** zum Aufräumen
+der Liste. Ein echtes, aber **beschädigtes** PDF lässt sich oft mit
+**„🛠 Reparieren"** (pikepdf bzw. Ghostscript) wiederherstellen.
+
 ## Tests
 
 ```bash

@@ -84,6 +84,22 @@ def test_file_hash_missing_file_returns_empty(tmp_path):
     assert P.file_hash(tmp_path / "gibtsnicht.bin") == ""
 
 
+def test_sniff_pdf(tmp_path):
+    def w(name, data):
+        p = tmp_path / name
+        p.write_bytes(data)
+        return p
+    assert P.sniff_pdf(w("real.pdf", b"%PDF-1.7\n%\xe2\xe3")) == (True, "PDF")
+    ok, kind = P.sniff_pdf(w("a.pdf", b"\xff\xfb\x90l\x00\x00"))   # MP3-Frame
+    assert ok is False and "MP3" in kind
+    assert P.sniff_pdf(w("b.pdf", b"ID3\x03\x00\x00"))[0] is False  # MP3 mit Tag
+    assert P.sniff_pdf(w("c.pdf", b"{\\rtf1\\ansi")) == (False, "RTF-Dokument")
+    assert P.sniff_pdf(w("d.pdf", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"))[0] is False
+    assert P.sniff_pdf(w("e.pdf", b"")) == (False, "leer")
+    assert P.sniff_pdf(w("g.pdf", b"hello, kein pdf")) == (False, "unbekanntes Format")
+    assert P.sniff_pdf(tmp_path / "weg.pdf") == (False, "nicht lesbar")
+
+
 def test_size_duplicate_candidates(tmp_path):
     a = tmp_path / "a.bin"; a.write_bytes(b"x" * 100)
     b = tmp_path / "b.bin"; b.write_bytes(b"y" * 100)   # gleiche Größe wie a

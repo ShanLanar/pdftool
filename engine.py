@@ -244,6 +244,46 @@ def size_duplicate_candidates(paths: list[Path]) -> list[Path]:
     return [p for lst in groups.values() if len(lst) > 1 for p in lst]
 
 
+def sniff_pdf(path: Path) -> tuple[bool, str]:
+    """
+    Prüft anhand der ersten Bytes, ob die Datei wirklich ein PDF ist.
+
+    Rückgabe: (ist_pdf, erkannter_typ). Erkennt gängige Fremdformate, damit
+    fälschlich als .pdf benannte Dateien (MP3, RTF, Word …) sauber gemeldet
+    statt mit kryptischen Fehlern verarbeitet werden.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(1024)
+    except OSError:
+        return False, "nicht lesbar"
+    if not head:
+        return False, "leer"
+    # PDF: "%PDF-" steht meist ganz vorne, gelegentlich nach wenigen Vorbytes.
+    if b"%PDF-" in head:
+        return True, "PDF"
+    signatures = [
+        (b"ID3", "MP3 (Audio)"),
+        (b"{\\rtf", "RTF-Dokument"),
+        (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "altes MS-Office (.doc/.xls)"),
+        (b"PK\x03\x04", "ZIP / Office-XML (.docx/.xlsx)"),
+        (b"\x89PNG\r\n\x1a\n", "PNG-Bild"),
+        (b"\xff\xd8\xff", "JPEG-Bild"),
+        (b"GIF87a", "GIF-Bild"),
+        (b"GIF89a", "GIF-Bild"),
+        (b"%!PS", "PostScript"),
+        (b"\x7fELF", "ausführbare Datei"),
+        (b"MZ", "Windows-Programm (.exe)"),
+    ]
+    for sig, label in signatures:
+        if head.startswith(sig):
+            return False, label
+    # MP3 ohne ID3-Tag: MPEG-Audio-Frame-Sync (0xFF, obere 3 Bit von Byte 2 = 1)
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return False, "MP3/MPEG-Audio"
+    return False, "unbekanntes Format"
+
+
 def _set_low_priority():
     """
     Setzt den aktuellen Prozess auf niedrige Priorität.
@@ -640,6 +680,13 @@ def optimize_pdf(
     """
     result = FileResult(path=pdf_path, success=False)
     result.size_before = pdf_path.stat().st_size
+
+    # Schnell aussortieren: als .pdf benannte Fremdformate (MP3, RTF, Word …)
+    is_pdf, kind = sniff_pdf(pdf_path)
+    if not is_pdf:
+        result.error = f"Keine PDF-Datei (erkannt als: {kind})"
+        log.warning("Übersprungen – %s: %s", result.error, pdf_path.name)
+        return result
 
     def _status(msg: str):
         log.info("  %s", msg)
@@ -1135,4 +1182,47 @@ def strip_metadata(src: Path, dst: Path) -> bool:
         return True
     except Exception as exc:
         log.error("Metadaten bereinigen fehlgeschlagen: %s", exc)
+        return False
+
+
+def repair_pdf(src: Path, dst: Path) -> bool:
+    """
+    Versucht, ein beschädigtes (aber echtes) PDF wiederherzustellen: zuerst mit
+    pikepdf (strukturelle Reparatur), als Fallback per Ghostscript-Neuschreiben.
+
+    Sinnlos bei Fremdformaten – diese werden vorab per sniff_pdf erkannt und
+    übersprungen (man kann z. B. ein MP3 nicht zu einem PDF reparieren).
+    """
+    is_pdf, kind = sniff_pdf(src)
+    if not is_pdf:
+        log.error("Reparatur übersprungen – keine PDF (%s): %s", kind, src.name)
+        return False
+
+    # 1) pikepdf öffnet/repariert viele Strukturfehler und schreibt sauber neu
+    try:
+        import pikepdf
+        with pikepdf.open(str(src)) as pdf:
+            pdf.save(str(dst))
+        log.info("Repariert (pikepdf): %s", src.name)
+        return True
+    except Exception as exc:
+        log.warning("pikepdf-Reparatur fehlgeschlagen (%s): %s", src.name, exc)
+
+    # 2) Fallback: Ghostscript schreibt das PDF komplett neu
+    gs_bin = _find_gs()
+    if not gs_bin:
+        log.error("Reparatur fehlgeschlagen (kein Ghostscript): %s", src.name)
+        return False
+    try:
+        cmd = [gs_bin, "-o", str(dst), "-sDEVICE=pdfwrite",
+               "-dPDFSETTINGS=/prepress", "-dNOPAUSE", "-dBATCH", "-dQUIET", str(src)]
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, timeout=600)
+        if proc.returncode == 0 and dst.exists():
+            log.info("Repariert (Ghostscript): %s", src.name)
+            return True
+        log.error("Ghostscript-Reparatur fehlgeschlagen: %s", src.name)
+        return False
+    except Exception as exc:
+        log.error("Reparatur fehlgeschlagen: %s", exc)
         return False

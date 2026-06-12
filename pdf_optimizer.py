@@ -701,7 +701,11 @@ class PdfOptimizerApp(_APP_BASE):
         ttk.Button(tools, text="Passwort entfernen",
                    command=self._tool_remove_password).pack(side="left", padx=(0, 4))
         ttk.Button(tools, text="Metadaten bereinigen",
-                   command=self._tool_strip_metadata).pack(side="left")
+                   command=self._tool_strip_metadata).pack(side="left", padx=(0, 4))
+        ttk.Button(tools, text="🛠 Reparieren",
+                   command=self._tool_repair).pack(side="left", padx=(0, 4))
+        ttk.Button(tools, text="🚫 Nicht-PDFs entfernen",
+                   command=self._tool_check_types).pack(side="left")
 
         # ── Einstellungen ─────────────────────────────────────────────────
         cfg = ttk.LabelFrame(self, text=" Einstellungen ", padding=8)
@@ -1417,6 +1421,39 @@ class PdfOptimizerApp(_APP_BASE):
         ok = sum(engine.strip_metadata(p, p.with_name(f"{p.stem}_clean.pdf"))
                  for p in files)
         messagebox.showinfo("Fertig", f"{ok}/{len(files)} bereinigt (Suffix _clean).")
+
+    def _tool_repair(self):
+        files = self._selected_files()
+        if not files:
+            return
+        ok = sum(engine.repair_pdf(p, p.with_name(f"{p.stem}_repariert.pdf"))
+                 for p in files)
+        messagebox.showinfo("Reparieren",
+            f"{ok}/{len(files)} repariert (Suffix _repariert).\n"
+            "Nicht-PDFs und nicht reparierbare Dateien wurden übersprungen "
+            "(siehe Log).")
+
+    def _tool_check_types(self):
+        """Erkennt als .pdf benannte Fremdformate und entfernt sie auf Wunsch."""
+        if not self._files:
+            return
+        from collections import Counter
+        bad: list[tuple[Path, str]] = []
+        for p in list(self._files):
+            is_pdf, kind = engine.sniff_pdf(p)
+            if not is_pdf:
+                bad.append((p, kind))
+        if not bad:
+            messagebox.showinfo("Prüfen", "Alle Einträge sind gültige PDF-Dateien.")
+            return
+        by_kind = Counter(k for _, k in bad)
+        summary = "\n".join(f"  {n}× {k}" for k, n in by_kind.most_common())
+        if messagebox.askyesno("Keine PDFs gefunden",
+                f"{len(bad)} von {len(self._files)} Dateien sind keine PDFs:\n"
+                f"{summary}\n\nAus der Liste entfernen?"):
+            for p, k in bad:
+                log.warning("Keine PDF (%s): %s", k, p.name)
+            self._remove_paths([p for p, _ in bad])
 
     # ── Duplikate & Umbenennen ────────────────────────────────────────────────
 
