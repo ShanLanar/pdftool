@@ -85,8 +85,9 @@ class FileResult:
     size_after: int = 0
     had_text: bool = False
     ocr_applied: bool = False
-    skipped: bool = False        # True = als Duplikat übersprungen
+    skipped: bool = False        # True = übersprungen (Duplikat oder zu klein)
     skip_reason: str = ""        # Erklärung warum übersprungen
+    skip_kind: str = ""          # "dup" = Duplikat, "small" = zu klein, "" = n/a
     kept_original: bool = False  # True = Ergebnis war größer, Original behalten
     error: str = ""
 
@@ -243,22 +244,6 @@ def file_hash(path: Path, chunk: int = 1 << 20) -> str:
     except OSError:
         return ""
     return h.hexdigest()
-
-
-def find_duplicates(paths: list[Path]) -> dict[str, list[Path]]:
-    """
-    Erkennt Duplikate in einer Liste von Pfaden.
-
-    Gibt ein Dict {hash: [Pfad, Pfad, ...]} zurück,
-    das nur Gruppen mit mehr als einem Eintrag enthält.
-    """
-    from collections import defaultdict
-    groups: dict[str, list[Path]] = defaultdict(list)
-    for p in paths:
-        h = file_hash(p)
-        if h:
-            groups[h].append(p)
-    return {h: lst for h, lst in groups.items() if len(lst) > 1}
 
 
 def _set_low_priority():
@@ -906,7 +891,7 @@ def export_csv(results: list, out_path: Path) -> None:
         ])
         for r in results:
             if r.skipped:
-                status = "Duplikat übersprungen"
+                status = "Duplikat" if r.skip_kind == "dup" else "Übersprungen (zu klein)"
             elif not r.success:
                 status = "Fehler"
             elif r.kept_original:
@@ -1479,6 +1464,8 @@ class PdfOptimizerApp(tk.Tk):
         self._prefs = load_settings()          # ← gespeicherte Einstellungen
         self._build_ui()
         self._apply_prefs()                    # ← Widgets befüllen
+        # Live-Aktualisierung des KB/Seite-Filters (Färbung + Seitenscan)
+        self.var_skip_kb.trace_add("write", self._on_skip_threshold_change)
         self._setup_logging()
         self._check_tools()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1928,7 +1915,10 @@ class PdfOptimizerApp(tk.Tk):
 
     def _update_list_colors(self):
         """Färbt Listbox-Einträge grau wenn KB/Seite unter Schwellwert."""
-        threshold = self.var_skip_kb.get()
+        try:
+            threshold = self.var_skip_kb.get()
+        except tk.TclError:
+            return                      # Feld gerade leer (Tippvorgang)
         for i, p in enumerate(self._files):
             pages = self._page_cache.get(p, 0)
             kbpp  = kb_per_page(p, pages)
@@ -1936,6 +1926,19 @@ class PdfOptimizerApp(tk.Tk):
                 self.file_list.itemconfigure(i, fg="#585b70")  # grau
             else:
                 self.file_list.itemconfigure(i, fg="#cdd6f4")  # normal
+
+    def _on_skip_threshold_change(self, *_):
+        """Reagiert live auf Änderungen am KB/Seite-Schwellwert."""
+        try:
+            threshold = self.var_skip_kb.get()
+        except tk.TclError:
+            return                      # Feld gerade leer/ungültig
+        self._update_list_colors()
+        # Seitenzahlen nachladen, falls für den Filter nötig und noch unbekannt
+        if threshold > 0 and not self._page_scanning:
+            missing = [p for p in self._files if p not in self._page_cache]
+            if missing:
+                self._start_page_scan(missing)
 
     def _remove_selected(self):
         indices = list(self.file_list.curselection())
@@ -1983,11 +1986,6 @@ class PdfOptimizerApp(tk.Tk):
         else:
             self.var_dup_badge.set("")
             self.lbl_dup_badge.pack_forget()
-
-    # _update_file_header als Alias für Rückwärtskompatibilität
-    def _update_file_header(self):
-        self._update_file_count()
-        self._update_dup_badge()
 
     def _pick_outdir(self):
         d = filedialog.askdirectory(title="Ausgabeordner wählen")
@@ -2254,7 +2252,8 @@ class PdfOptimizerApp(tk.Tk):
                 first = seen_hashes[h]
                 skip_r = FileResult(
                     path=p, success=True,
-                    skipped=True, skip_reason=f"Duplikat von {first.name}",
+                    skipped=True, skip_kind="dup",
+                    skip_reason=f"Duplikat von {first.name}",
                     size_before=p.stat().st_size if p.exists() else 0,
                 )
                 results.append(skip_r)
@@ -2271,7 +2270,7 @@ class PdfOptimizerApp(tk.Tk):
                     if kbpp <= threshold:
                         skip_r = FileResult(
                             path=p, success=True,
-                            skipped=True,
+                            skipped=True, skip_kind="small",
                             skip_reason=f"{kbpp:.0f} KB/Seite ≤ {threshold} KB/Seite",
                             size_before=p.stat().st_size if p.exists() else 0,
                             size_after=p.stat().st_size if p.exists() else 0,
@@ -2283,7 +2282,8 @@ class PdfOptimizerApp(tk.Tk):
 
         n_skip = len(results)
         if n_skip:
-            self.after(0, log.info, "Überspringe %d Duplikat(e).", n_skip)
+            self.after(0, log.info,
+                       "Überspringe %d Datei(en) vorab (Duplikate / zu klein).", n_skip)
 
         # CPU-Budget festlegen: begrenzt die Gesamtlast (n_workers × OCR-Jobs),
         # damit die Maschine nicht dauerhaft auf 100 % läuft (Hitze/Netzteil).
@@ -2357,6 +2357,8 @@ class PdfOptimizerApp(tk.Tk):
 
         ok      = [r for r in results if r.success and not r.skipped]
         skipped = [r for r in results if r.skipped]
+        dup_skipped   = [r for r in skipped if r.skip_kind == "dup"]
+        small_skipped = [r for r in skipped if r.skip_kind == "small"]
         failed  = [r for r in results if not r.success and not r.skipped]
         kept    = [r for r in ok if r.kept_original]
         total_before = sum(r.size_before for r in ok)
@@ -2365,7 +2367,8 @@ class PdfOptimizerApp(tk.Tk):
         self.var_status.set(
             f"Fertig: {len(ok)} optimiert"
             + (f" ({len(kept)} Original behalten)" if kept else "")
-            + (f" | {len(skipped)} Duplikate übersprungen" if skipped else "")
+            + (f" | {len(dup_skipped)} Duplikate" if dup_skipped else "")
+            + (f" | {len(small_skipped)} zu klein übersprungen" if small_skipped else "")
             + (f" | {len(failed)} Fehler" if failed else "")
             + (f" | Gespart: {(total_before-total_after)/1024:.0f} KB" if total_before else "")
         )
