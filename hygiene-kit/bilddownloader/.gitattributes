@@ -1,4 +1,0 @@
-# Windows-Batchdateien immer mit CRLF auschecken,
-# sonst startet cmd.exe sie unter Umstaenden nicht korrekt.
-*.bat text eol=crlf
-*.cmd text eol=crlf

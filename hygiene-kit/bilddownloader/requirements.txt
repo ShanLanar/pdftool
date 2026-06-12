@@ -1,5 +1,0 @@
-# bilddownloader - Python-Abhaengigkeiten
-# Installation: pip install -r requirements.txt
-requests>=2.31
-Pillow>=10.0
-urllib3>=2.0
