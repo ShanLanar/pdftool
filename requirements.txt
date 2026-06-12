@@ -1,0 +1,18 @@
+# PDF Optimizer – Python-Abhängigkeiten
+# Installation: pip install -r requirements.txt
+
+pypdf>=4.0
+Pillow>=10.0
+pytesseract>=0.3.10
+pdf2image>=1.17
+ocrmypdf>=16.0
+img2pdf>=0.5
+
+# Systemabhängigkeiten (über Paketmanager installieren):
+# Ubuntu/Debian:
+#   sudo apt install ghostscript tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng poppler-utils
+# Windows:
+#   Ghostscript: https://www.ghostscript.com/download/gsdnld.html
+#   Tesseract:   https://github.com/UB-Mannheim/tesseract/wiki
+# macOS:
+#   brew install ghostscript tesseract tesseract-lang poppler
