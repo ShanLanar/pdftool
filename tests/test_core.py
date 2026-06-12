@@ -7,7 +7,7 @@ gestubbt). Ausführen:  python -m pytest -q
 """
 from pathlib import Path
 
-import pdf_optimizer as P
+import engine as P
 
 
 # ── CPU-Budget ────────────────────────────────────────────────────────────────

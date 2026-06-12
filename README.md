@@ -45,6 +45,27 @@ Neueste Version holen: Doppelklick auf **`Code-aktualisieren.bat`**.
 python pdf_optimizer.py
 ```
 
+## Kommandozeile (CLI)
+
+Für Skripte, Server oder Stapelläufe gibt es eine GUI-freie Variante mit
+derselben Engine:
+
+```bash
+python cli.py akte.pdf                          # einzelne Datei
+python cli.py -o out/ --preset screen --no-ocr ordner/
+python cli.py -r --workers 2 --gentle ~/Scans   # rekursiv, schonend
+python cli.py --help                            # alle Optionen
+```
+
+## Aufbau
+
+| Datei | Inhalt |
+|-------|--------|
+| `engine.py` | Verarbeitung (Komprimierung, OCR, Duplikate) – ohne GUI, testbar |
+| `pdf_optimizer.py` | grafische Oberfläche (tkinter) |
+| `cli.py` | Kommandozeilen-Variante |
+| `tests/` | pytest-Tests für die Engine |
+
 ## Bedienung
 
 1. PDFs per „+ Hinzufügen" auswählen (Mehrfachauswahl möglich)
