@@ -102,3 +102,25 @@ def test_fileresult_saved_pct():
     r0 = P.FileResult(path=Path("y.pdf"), success=True,
                       size_before=0, size_after=0)
     assert r0.saved_pct == 0.0   # keine Division durch Null
+
+
+# ── Einstellungen & Berichtsordner ───────────────────────────────────────────
+
+def test_load_settings_fills_defaults(monkeypatch, tmp_path):
+    monkeypatch.setattr(P, "_settings_path", lambda: tmp_path / "settings.json")
+    prefs = P.load_settings()                 # Datei existiert nicht -> Defaults
+    for key in P.DEFAULT_PREFS:
+        assert key in prefs
+    assert prefs["image_dpi"] == P.DEFAULT_PREFS["image_dpi"]
+
+
+def test_reports_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(P, "_settings_path", lambda: tmp_path / "cfg" / "settings.json")
+    # ohne Ausgabeordner -> reports-Unterordner neben der Konfiguration
+    d = P._reports_dir(None)
+    assert d == tmp_path / "cfg" / "reports"
+    assert d.is_dir()
+    # mit Ausgabeordner -> genau dieser (und angelegt)
+    out = tmp_path / "out"
+    assert P._reports_dir(out) == out
+    assert out.is_dir()

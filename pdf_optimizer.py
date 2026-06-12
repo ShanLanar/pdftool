@@ -18,6 +18,7 @@ import threading
 import subprocess
 import logging
 import shutil
+import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -315,6 +316,7 @@ def compress_with_gs(
     image_dpi: int = 150,
     gentle: bool = False,
     max_cores: Optional[int] = None,
+    cancel=None,
     progress_cb=None,
 ) -> bool:
     """
@@ -352,27 +354,43 @@ def compress_with_gs(
     log.info("GS-Komprimierung: %s → %s (Preset=%s, DPI=%d%s)",
              src.name, dst.name, preset, image_dpi, ", schonend" if gentle else "")
 
+    err_file = tempfile.TemporaryFile()
     try:
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stderr=err_file,
         )
         if gentle:
             _set_gs_low_priority(proc, max_cores)
 
-        _, stderr = proc.communicate(timeout=600)
+        # Poll-Schleife: erlaubt sofortigen Abbruch (cancel) und einen
+        # Gesamt-Timeout, ohne dass eine volle stderr-Pipe Ghostscript blockiert.
+        deadline = time.monotonic() + 600
+        while proc.poll() is None:
+            if cancel is not None and cancel.is_set():
+                proc.kill()
+                proc.wait()
+                log.info("Ghostscript abgebrochen: %s", src.name)
+                return False
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                log.error("Ghostscript-Timeout für %s", src.name)
+                return False
+            time.sleep(0.2)
+
         if proc.returncode != 0:
-            log.error("Ghostscript-Fehler:\n%s", stderr.decode(errors="replace")[:500])
+            err_file.seek(0)
+            log.error("Ghostscript-Fehler:\n%s",
+                      err_file.read().decode(errors="replace")[:500])
             return False
         return True
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        log.error("Ghostscript-Timeout für %s", src.name)
-        return False
     except Exception as exc:
         log.error("GS-Ausnahme: %s", exc)
         return False
+    finally:
+        err_file.close()
 
 
 def analyze_pdf_images(pdf_path: Path) -> list[dict]:
@@ -608,6 +626,7 @@ def optimize_pdf(
     progress_cb=None,
     status_cb=None,
     out_path: Optional[Path] = None,
+    cancel=None,
 ) -> FileResult:
     """
     Haupt-Pipeline: Komprimierung → OCR → Ausgabedatei.
@@ -686,8 +705,12 @@ def optimize_pdf(
                 image_dpi=settings.image_dpi,
                 gentle=settings.gentle_mode,
                 max_cores=settings.ocr_jobs or None,
+                cancel=cancel,
                 progress_cb=progress_cb,
             )
+            if cancel is not None and cancel.is_set():
+                result.error = "Abgebrochen"
+                return result
             if not ok:
                 _status("⚠ Ghostscript fehlgeschlagen – fahre ohne GS-Komprimierung fort.")
                 shutil.copy2(current_input, tmp_compressed)
@@ -701,6 +724,10 @@ def optimize_pdf(
         if settings.gentle_mode and settings.gentle_pause_s > 0 and settings.ocr_enabled:
             _status(f"  ⏸ Schonmodus-Pause {settings.gentle_pause_s:.0f}s …")
             time.sleep(settings.gentle_pause_s)
+
+        if cancel is not None and cancel.is_set():
+            result.error = "Abgebrochen"
+            return result
 
         # ── Schritt 2: OCR ────────────────────────────────────────────────
         if settings.ocr_enabled:
@@ -844,26 +871,46 @@ def _settings_path() -> Path:
     return cfg_dir / "settings.json"
 
 
+def _reports_dir(output_dir: Optional[Path]) -> Path:
+    """
+    Zielordner für CSV-/Log-Berichte: der gewählte Ausgabeordner, sonst ein
+    'reports'-Unterordner neben der Konfiguration – damit nicht das
+    Home-Verzeichnis zugemüllt wird.
+    """
+    base = output_dir if output_dir else (_settings_path().parent / "reports")
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+# Einzige Quelle der Wahrheit für die Standard-Einstellungen (GUI + Persistenz).
+DEFAULT_PREFS: dict = {
+    "compress": True,
+    "gs_preset_index": 1,
+    "image_dpi": 150,
+    "recompress_images": True,
+    "jpeg_quality": 75,
+    "ocr_enabled": True,
+    "ocr_lang": "deu+eng",
+    "ocr_force": False,
+    "gentle_mode": False,
+    "gentle_pause_s": 2.0,
+    "gentle_worker_delay_s": 3.0,
+    "skip_kb_per_page": 0,
+    "output_suffix": "_opt",
+    "output_dir": "",
+    "n_workers": 2,
+}
+
+
 def load_settings() -> dict:
-    """Lädt gespeicherte Einstellungen oder gibt Defaults zurück."""
-    defaults = {
-        "compress": True,
-        "gs_preset_index": 1,
-        "image_dpi": 150,
-        "ocr_enabled": True,
-        "ocr_lang": "deu+eng",
-        "ocr_force": False,
-        "output_suffix": "_opt",
-        "output_dir": "",
-        "n_workers": 2,
-    }
+    """Lädt gespeicherte Einstellungen, ergänzt fehlende mit den Defaults."""
+    prefs = DEFAULT_PREFS.copy()
     try:
         with open(_settings_path(), encoding="utf-8") as f:
-            saved = json.load(f)
-        defaults.update(saved)
+            prefs.update(json.load(f))
     except (FileNotFoundError, json.JSONDecodeError):
         pass
-    return defaults
+    return prefs
 
 
 def save_settings(data: dict) -> None:
@@ -2044,26 +2091,25 @@ class PdfOptimizerApp(tk.Tk):
     # ── Einstellungen laden / speichern ──────────────────────────────────
 
     def _apply_prefs(self):
-        p = self._prefs
-        self.var_compress.set(p.get("compress", True))
-        idx = p.get("gs_preset_index", 1)
+        p = {**DEFAULT_PREFS, **self._prefs}     # garantiert alle Schlüssel
+        self.var_compress.set(p["compress"])
         preset_keys = list(self.PRESETS.keys())
-        self.combo_preset.current(min(idx, len(preset_keys) - 1))
-        self.var_dpi.set(p.get("image_dpi", 150))
-        self.var_recompress.set(p.get("recompress_images", True))
-        self.var_jpeg_q.set(p.get("jpeg_quality", 75))
-        self.var_ocr.set(p.get("ocr_enabled", True))
-        self.var_lang.set(p.get("ocr_lang", "deu+eng"))
-        self.var_force_ocr.set(p.get("ocr_force", False))
-        self.var_gentle.set(p.get("gentle_mode", False))
-        self.var_gentle_pause.set(p.get("gentle_pause_s", 2.0))
-        self.var_gentle_delay.set(p.get("gentle_worker_delay_s", 3.0))
-        self.var_skip_kb.set(p.get("skip_kb_per_page", 0))
-        self.var_suffix.set(p.get("output_suffix", "_opt"))
-        saved_dir = p.get("output_dir", "")
+        self.combo_preset.current(min(p["gs_preset_index"], len(preset_keys) - 1))
+        self.var_dpi.set(p["image_dpi"])
+        self.var_recompress.set(p["recompress_images"])
+        self.var_jpeg_q.set(p["jpeg_quality"])
+        self.var_ocr.set(p["ocr_enabled"])
+        self.var_lang.set(p["ocr_lang"])
+        self.var_force_ocr.set(p["ocr_force"])
+        self.var_gentle.set(p["gentle_mode"])
+        self.var_gentle_pause.set(p["gentle_pause_s"])
+        self.var_gentle_delay.set(p["gentle_worker_delay_s"])
+        self.var_skip_kb.set(p["skip_kb_per_page"])
+        self.var_suffix.set(p["output_suffix"])
+        saved_dir = p["output_dir"]
         if saved_dir and Path(saved_dir).is_dir():
             self.var_outdir.set(saved_dir)
-        self.var_workers.set(p.get("n_workers", 2))
+        self.var_workers.set(p["n_workers"])
         self._toggle_compress()
         self._toggle_recompress()
         self._toggle_ocr()
@@ -2314,7 +2360,8 @@ class PdfOptimizerApp(tk.Tk):
                 delay = worker_idx * settings.gentle_worker_delay_s
                 log.debug("Worker-Start %d: warte %.0fs.", worker_idx, delay)
                 time.sleep(delay)
-            return optimize_pdf(pdf_path, settings, out_path=out_map.get(pdf_path))
+            return optimize_pdf(pdf_path, settings,
+                                out_path=out_map.get(pdf_path), cancel=cancel)
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             future_to_path = {
@@ -2407,7 +2454,8 @@ class PdfOptimizerApp(tk.Tk):
         # ── CSV-Export ───────────────────────────────────────────────────
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         raw_outdir = self.var_outdir.get()
-        csv_dir = Path(raw_outdir) if not raw_outdir.startswith("(") else Path.home()
+        outdir = None if raw_outdir.startswith("(") else Path(raw_outdir)
+        csv_dir = _reports_dir(outdir)
         csv_path = csv_dir / f"pdf_optimizer_{timestamp}.csv"
         try:
             export_csv(results, csv_path)
